@@ -1,19 +1,233 @@
-# HECATE
-Hecate [hek-uh-tee] is a video processing library that auto-magically generates thumbnails, animated GIFs, and video summaries from videos. This library is developed and maintained by Yahoo Research, New York.
+## 0x00 实现原理
 
-The source code is Copyright 2016 Yahoo Inc. and is licensed under the terms of the Apache 2.0 License. See the [LICENSE](https://github.com/yahoo/hecate/blob/master/LICENSE) in the project root file for terms.
+> 参考： https://arxiv.org/abs/1609.01388
 
-The technology behind this library is based on our research work. If you find this library useful in your work, we ask you to cite our research paper:
+一、 帧过滤
+
+1. 低质量帧
+    - 黑色
+    - 单色
+    - 模糊（锐度）
+    - 一致性（标准化强度直方图）
+2. 淡入淡出（镜头转换） 
+3. 溶解
+4. 擦除
+
+二、关键帧提取
+
+1. 特征提取（过滤重复）
+    - HSV直方图
+    - 边缘直方图
+2. 关键帧提取
+    - 子镜头识别（复活意外被丢弃的高质量帧）
+    - 运动能量低（静止）
+三、缩略图选择
+1. 相关性
+    - 聚类
+2. 画面吸引力
+    - 无监督图像美学（ML）
+         - 色彩
+         - 纹理（光滑、均匀度）
+         - 质量（对比度、曝光...）
+         - 构图
+   - 监督图像美学（ML）
+        - 随机森林回归模型
+
+## 0x01 安装方法（CentOS）
+
+> 目前已在 `in-prod-songbook-silence-1` 配置好环境，可直接使用
+
+### 安装ffmpeg
+
+ffmpeg 安装流程较为复杂，现已整理为shell，直接运行即可。
+每种依赖提供了编译安装和yum安装两种方式，目前默认yum，可自行修改。
+
+shell 如下：
 ```
-"To Click or Not To Click: Automatic Selection of Beautiful Thumbnails from Videos."
-Yale Song, Miriam Redi, Jordi Vallmitjana, Alejandro Jaimes, 
-Proceedings of the 25th ACM International on Conference on Information and Knowledge Management, CIKM 2016
+# 参考： https://trac.ffmpeg.org/wiki/CompilationGuide/Centos
+
+yum -y install autoconf automake bzip2 cmake freetype-devel gcc gcc-c++ git libtool make mercurial pkgconfig zlib-devel bzip2-devel
+mkdir ~/ffmpeg_sources
+
+
+#安装nasm
+yum -y install nasm
+#cd ~/ffmpeg_sources
+#curl -O -L http://www.nasm.us/pub/nasm/releasebuilds/2.13.02/nasm-2.13.02.tar.bz2
+#tar xjvf nasm-2.13.02.tar.bz2
+#cd nasm-2.13.02
+#./autogen.sh
+#./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin"
+#make
+#make install
+
+#安装Yasm 用yum的方式
+yum -y install yasm
+#cd ~/ffmpeg_sources
+#curl -O -L http://www.tortall.net/projects/yasm/releases/yasm-1.3.0.tar.gz
+#tar xzvf yasm-1.3.0.tar.gz
+#cd yasm-1.3.0
+#./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin"
+#make
+#make install
+
+#libx 264
+cd ~/ffmpeg_sources
+git clone --depth 1 http://git.videolan.org/git/x264
+cd x264
+PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" --enable-static --disable-asm
+make
+make install
+
+#libx265
+cd ~/ffmpeg_sources
+hg clone https://bitbucket.org/multicoreware/x265
+cd ~/ffmpeg_sources/x265/build/linux
+cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX="$HOME/ffmpeg_build" -DENABLE_SHARED:bool=off ../../source
+make
+make install
+
+
+
+#libfdk_aac
+cd ~/ffmpeg_sources
+git clone --depth 1 https://github.com/mstorsjo/fdk-aac
+cd fdk-aac
+autoreconf -fiv
+./configure --prefix="$HOME/ffmpeg_build" --disable-shared
+make
+make install
+
+
+#libmp3lame
+cd ~/ffmpeg_sources
+curl -O -L http://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+tar xzvf lame-3.100.tar.gz
+cd lame-3.100
+./configure --prefix="$HOME/ffmpeg_build" --bindir="$HOME/bin" --disable-shared --enable-nasm
+make
+make install
+
+#libopus
+cd ~/ffmpeg_sources
+curl -O -L https://archive.mozilla.org/pub/opus/opus-1.2.1.tar.gz
+tar xzvf opus-1.2.1.tar.gz
+cd opus-1.2.1
+./configure --prefix="$HOME/ffmpeg_build" --disable-shared
+make
+make install
+
+#libogg
+cd ~/ffmpeg_sources
+curl -O -L http://downloads.xiph.org/releases/ogg/libogg-1.3.3.tar.gz
+tar xzvf libogg-1.3.3.tar.gz
+cd libogg-1.3.3
+./configure --prefix="$HOME/ffmpeg_build" --disable-shared
+make
+make install
+
+#libvorbis
+cd ~/ffmpeg_sources
+curl -O -L http://downloads.xiph.org/releases/vorbis/libvorbis-1.3.5.tar.gz
+tar xzvf libvorbis-1.3.5.tar.gz
+cd libvorbis-1.3.5
+./configure --prefix="$HOME/ffmpeg_build" --with-ogg="$HOME/ffmpeg_build" --disable-shared
+make
+make install
+
+#libvpx------------
+cd ~/ffmpeg_sources
+git clone --depth 1 https://chromium.googlesource.com/webm/libvpx.git
+cd libvpx
+./configure --prefix="$HOME/ffmpeg_build" --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --as=yasm
+make
+make install
+
+#FFmpeg
+cd ~/ffmpeg_sources
+curl -O -L https://ffmpeg.org/releases/ffmpeg-4.1.tar.bz2
+tar xjvf ffmpeg.tar.bz2
+cd ffmpeg
+PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./configure \
+--prefix="$HOME/ffmpeg_build" \
+--pkg-config-flags="--static" \
+--extra-cflags="-I$HOME/ffmpeg_build/include" \
+--extra-ldflags="-L$HOME/ffmpeg_build/lib" \
+--extra-libs=-lpthread \
+--extra-libs=-lm \
+--bindir="$HOME/bin" \
+--enable-gpl \
+--enable-libfdk_aac \
+--enable-libfreetype \
+--enable-libmp3lame \
+--enable-libopus \
+--enable-libvorbis \
+--enable-libvpx \
+--enable-libx264 \
+--enable-libx265 \
+--enable-nonfree
+make
+make install
+hash -r
+
+
+# 覆盖之前安装的版本
+\cp -f ffmpeg /bin/ffmpeg
+\cp -f ffmpeg /usr/bin/ffmpeg
+\cp -f ffprobe /bin/ffprobe
+\cp -f ffprobe /usr/bin/ffprobe
+
 ```
 
-## Installation
-Hecate has one dependency: [OpenCV library](https://github.com/opencv/opencv) with an [FFMPEG](https://github.com/FFmpeg/FFmpeg) support. You will need to install the library properly before trying out Hecate!
+### 安装opencv3
 
-Once you install the dependenct library correctly, follow the instruction below:
+> 参考：https://www.vultr.com/docs/how-to-install-opencv-on-centos-7
+
+安装依赖
+```
+yum groupinstall "Development Tools" -y
+yum install cmake gcc gtk2-devel numpy pkconfig -y
+
+```
+下载&解压
+```
+cd
+wget https://github.com/opencv/opencv/archive/3.3.0.zip
+unzip 3.3.0.zip
+```
+编译&安装
+```
+cd opencv-3.3.0
+mkdir build
+cd build
+cmake -D CMAKE_BUILD_TYPE=DEBUG -D CMAKE_INSTALL_PREFIX=/usr/local ..
+make
+make install
+
+export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig/
+echo '/usr/local/lib/' >> /etc/ld.so.conf.d/opencv.conf
+ldconfig
+
+```
+
+测试效果
+```
+cd
+git clone https://github.com/opencv/opencv_extra.git
+export OPENCV_TEST_DATA_PATH=/root/opencv_extra/testdata
+
+cd /root/opencv-3.3.0/build/bin
+ls
+./opencv_test_photo
+```
+
+
+### hecate 安装 & 使用
+
+> 参考：https://github.com/yahoo/hecate
+
+安装
+
 ```
 $ git clone https://github.com/yahoo/hecate.git
 $ cd hecate
@@ -26,112 +240,8 @@ $ vim Makefile.config
 $ make all
 $ make distribute
 ```
-
-Once you've successfully compiled hecate, it will generate a binary executable under `distribute/bin/`. Run the following command to check if everything works properly:
-```
-$ ./distribute/bin/hecate
-
--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
- HECATE Copyright 2016 Yahoo Inc.
-   Licensed under the terms of the Apache 2.0 License.
-   Developed by : Yale Song (yalesong@yahoo-inc.com)
-   Built on  : 11:46:03 Aug 11 2016
--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-USAGE: hecate -i infile [options]
-
-  -i  --in_video      (string)    Input video file
-  -o  --out_dir       (string)    Output directory (./output)
-  -s  --step          (int)       Frame subsampling step size (1)
-  -n  --njpg          (int)       Number of thumbnails to be generated (5)
-  -q  --ngif          (int)       Number of GIFs to be generated (5)
-  -r  --lmov          (int)       Length of video summary to be generated (in seconds) (15)
-  -u  --jpg_width_px  (int)       Pixel width of thumbnail images (360)
-  -v  --gif_width_px  (int)       Pixel width of animated GIFs (360)
-  -w  --mov_width_px  (int)       Pixel width of summary video (360)
-  --generate_jpg                  Generate thumbnail images
-  --generate_gif                  Generate animated GIFs
-  --generate_mov                  Generate a summary video
-  --generate_gifsum               Generate animated GIFs summary
-  --generate_gifall               Generate all possible animated GIFs
-  --print_shot_info               Print shot boundary detection results
-  --print_keyfrm_info             Print keyframe indices
-```
-
-Congratulations! You have successfully installed hecate!
-
-
-## Get started
-In order to get started, we will need a video file to play with. In this example, we will use the video ["The Spirit of '43" by Walt Disney](https://archive.org/details/TheSpiritOf43_56) from [The Internet Archive](https://archive.org). 
-
-Let's download the video and save it as `examples/video.mp4`:
-```
-$ wget https://archive.org/download/TheSpiritOf43_56/The_Spirit_of__43_512kb.mp4 \
-  --output-document examples/video.mp4 --no-check-certificate
-```
-
-Hecate provides three main functionalities through a binary executable `hecate`: Thumbnail extraction, GIF generation, and video summarization. There are various other functionalities the library provides, such as shot boundary detection and keyframe extraction. 
-
-We will explain each case below.
-
-### Shot boundary detection and keyframe extraction
-Shot boundary detection and keyframe extraction are often the first steps towards various video processing methods. With Hecate, obtaining shot and keyframe information is easier than ever! Simply run the following command to get the result:
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --print_shot_info  --print_keyfrm_info
-```
-
-Below is the results we obtained on our dev machine (OS X 10.10 with OpenCV v3.1):
-```
-shots: [0:81],[84:93],[96:102],[108:270],[272:418],...,[9966:10131],[10135:10164]
-keyframes: [52,85,98,128,165,208,242,259,265,273,...,10127,10141]
-```
-The units are frame indices (zero-based). You will notice that shot ranges are non-continuous; there are "gaps" between shots, e.g., two frames are missing between the first two shots [0:81] and [84:93]. This is normal and intentional: Hecate discards low-quality frames that aren't ideal in producing nicely looking thumbnails, animated GIFs, and video summaries. We refer to our CIKM 2016 paper for the rational behind our reason to invalidate low-quality frames.
-
-### Thumbnail generation
-Hecate uses computer vision to determine frames that are most "suitable" as video thumbnails. By suitable, we mean a frame that is the most relevant to the video content and that is the most beautiful in terms of computational aesthetics; technical details are explained in our CIKM 2016 paper.
-
-You can generate thumbnail images using Hecate. Run the following command to generate one thumbnail image from the video.
+使用
 ```
 $ ./distribute/bin/hecate -i examples/video.mp4 --generate_jpg --njpg 1
 ```
-You will see the generated thumbnail image under the output directory (set as `output` by default; you can change this using the option `--out_dir YOUR_DIRECTORY`). On our dev machine we get this thumbnail image:
 
-![alt text](https://github.com/yahoo/hecate/blob/master/examples/video_00.jpg "Hecate Thumbnail Image")
-
-In the above example, we generated only one thumbnail image. Are you not satisfied with the thumbnail image? Hecate can generate any number of thunbmail images! Let's generate five thumbnail images.
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --generate_jpg --njpg 3
-```
-
-The output files are named `<video_filename>_<rank>.jpg`. The files are ranked by their quality (rank 0 means it's the best one).
-
-### Animated GIF generation
-Do you want to create animated GIFs from a video without the hassle of using manual tools? Hecate can automatically create them for you! Run the following command to create one animated GIF from the video.
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --generate_gif --ngif 1
-```
-On our dev machine, we get this animated GIF:
-
-![alt text](https://github.com/yahoo/hecate/blob/master/examples/video_00.gif "Hecate Animated GIF")
-
-You can, of course, create more than just one GIF by setting the paramter `--ngif N` with an appropriate number N. When there are multiple GIFs, you can also generate a "summary GIF" by concatenating them, using this command:
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --generate_gif --ngif 3 --generate_gifsum
-```
-
-If you'd rather want to obtain all available GIFs from the video, use the following command: 
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --generate_gifall
-```
-
-### Video summary generation
-Last but not least, Hecate can summarize a video! Run the following command to create a video summary of length 15 seconds.
-```
-$ ./distribute/bin/hecate -i examples/video.mp4 --generate_mov --lmov 15
-```
-We included the video summary generated on our dev machine here: 
-[https://github.com/yahoo/hecate/blob/master/examples/video_sum.mp4](https://github.com/yahoo/hecate/blob/master/examples/video_sum.mp4)
-
-
-## Developer
-
-Yale Song: [github](https://github.com/yalesong), [website](http://people.csail.mit.edu/yalesong)
