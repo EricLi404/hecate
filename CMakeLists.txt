@@ -8,7 +8,7 @@ include_directories(include/hecate)
 
 
 find_package(OpenCV)
-include_directories(/usr/local/include)
+
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 FILE(GLOB_RECURSE laji include/*.hpp)
